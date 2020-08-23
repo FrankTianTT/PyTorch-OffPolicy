@@ -1,10 +1,14 @@
 import gym
 import random
+import os
+import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
+import collections
 
-DEVICE = 'cuda'
+DEVICE = 'cpu'
 
 '''
 The input size of Q network is the size of observation, and the output size of Q network
@@ -25,32 +29,37 @@ class Buffer:
     def __init__(self, buffer_size=1000, batch_size=256):
         self.buffer_size = buffer_size
         self.batch_size = batch_size
-        self.reply_buffer = []
+        self.reply_buffer = collections.deque(maxlen = self.buffer_size)
         self.buffer_len = 0
 
-    def add(self,last_obs , action, reward, obs, done):
-        if len(self.reply_buffer) >= self.buffer_size:
-            self.reply_buffer.pop(0)
-        self.reply_buffer.append([last_obs, action, reward, obs, done])
+    def add(self, obs, action, reward, next_obs, done):
+        self.reply_buffer.append([obs, action, reward, next_obs, done])
         self.buffer_len = len(self.reply_buffer)
 
     def sample(self):
         assert self.buffer_len >= self.batch_size
-        sample = random.sample(self.reply_buffer, self.batch_size)
-        return sample
+        indexs = np.random.choice(self.buffer_len, self.batch_size, replace=False)
+        obss, actions, rewards, next_obss, dones = zip(*[self.reply_buffer[i] for i in indexs])
+        return np.array(obss), np.array(actions), np.array(rewards),\
+               np.array(next_obss), np.array(dones)
 
 class Agent:
     def __init__(self,
                  env,
+                 model_name='dqn',
+                 env_name='CartPole-v1',
                  mode='train',
                  hidden_size=100,
                  buffer_size=1000,
                  batch_size=128,
                  gamma=0.9,
+                 max_epsilon=0.3,
                  learning_rate=0.0001,
                  device=DEVICE,
                  synchronize=50):
         assert isinstance(env.action_space, gym.spaces.Discrete)
+        self.model_name = model_name
+        self.env_name = env_name
         self.env = env
         self.obs_size = env.observation_space.shape[0]
         self.actor_size = env.action_space.n
@@ -63,26 +72,26 @@ class Agent:
         self.buffer = Buffer(self.buffer_size, self.batch_size)
         self.mode = mode
         self.gamma = gamma
+        self.max_epsilon = max_epsilon
         self.synchronize = synchronize
         self.total_trajectory = 0
         self.total_step = 0
         self.learning_rate = learning_rate
         self.this_trajectory_reward = 0
         self.action_sum = self.actor_size*[0]
-        self.now_obs_tensor = None
+        self.now_obs = None
         self.reset()
         print(self.q_net)
 
     def reset(self):
         obs = self.env.reset()
-        self.now_obs_tensor = torch.tensor(obs).float()
-        return self.now_obs_tensor
+        self.now_obs = obs
+        return self.now_obs
 
     def step(self, action, render=False):
         obs, reward, done, _ = self.env.step(action)
-        obs = torch.tensor(obs).float()
-        self.buffer.add(self.now_obs_tensor, action, reward, obs, done)
-        self.now_obs_tensor = obs
+        self.buffer.add(self.now_obs, action, reward, obs, done)
+        self.now_obs = obs
         self.this_trajectory_reward += reward
 
         if(render):
@@ -104,11 +113,11 @@ class Agent:
 
     def full_buffer(self):
         while(self.buffer.buffer_len < self.batch_size):
-            action = self.select_action(self.now_obs_tensor)
+            action = self.select_action(self.now_obs)
             obs, reward, done, _ = self.step(action)
 
     def best_action(self, obs):
-        q = self.q_net(obs.to(self.device))
+        q = self.q_net(torch.tensor(obs).float().to(self.device))
         return int(torch.argmax(q))
 
     def select_action(self, obs, epsilon=0.3):
@@ -128,23 +137,24 @@ class Agent:
         self.optimizer = torch.optim.Adam(self.q_net.parameters(), lr=self.learning_rate)
         self.loss_function = torch.nn.MSELoss()
 
-        t = 0
+        self.t = 0
         reward_list = []
-        while t < iters:
+        while self.t < iters:
             obs, reward, done, _ = self.train_step()
             if len(reward_list) >= 100:
                 reward_list.pop(0)
             reward_list.append(reward)
 
-            if t % self.synchronize == 0:
+            if self.t % self.synchronize == 0:
                 self.synchronize_net()
-            t += 1
+            self.t += 1
+
     def train_with_traje_reward(self, target_reward):
         assert self.mode == 'train'
         self.full_buffer()
         self.optimizer = torch.optim.Adam(self.q_net.parameters(), lr=self.learning_rate)
         self.loss_function = torch.nn.MSELoss()
-        t = 0
+        self.t = 0
         reward_list = []
         while True:
             obs, reward, done, _  = self.train_step()
@@ -152,13 +162,13 @@ class Agent:
                 reward_list.pop(0)
             reward_list.append(reward)
 
-            if t % self.synchronize == 0:
+            if self.t % self.synchronize == 0:
                 self.synchronize_net()
-            t += 1
+            self.t += 1
             if self.this_trajectory_reward > target_reward:
                 break
     def train_step(self):
-        action = self.select_action(self.now_obs_tensor)
+        action = self.select_action(self.now_obs)
         obs, reward, done, _ = self.step(action)
 
         x, y = self.get_batch_data()
@@ -177,27 +187,40 @@ class Agent:
         self.set_mode('play')
         self.reset()
         for i in range(1000):
-            action = self.best_action(self.now_obs_tensor)
+            action = self.best_action(self.now_obs)
             self.step(action, render=True)
 
+    def get_epsilon(self):
+        return self.max_epsilon - self.t*0.0001 if self.t < 2500 else 0.05
+
     def get_batch_data(self):
-        sample = self.buffer.sample()
-
-        x = [s[0].numpy() for s in sample]
-        y = [self.get_expect_out(s).detach().numpy() for s in sample]
-        return torch.tensor(x).to(self.device), torch.tensor(y).to(self.device)
-
-    #s: last_obs, action, reward, obs, done
-    def get_expect_out(self, s):
-        q = self.q_net(s[0].to(self.device))
-        if not s[4]:
-            q[s[1]] = s[2] + torch.max(self.target_net(s[3].to(self.device)))
-        else:
-            q[s[1]] = s[2]
-        return q
+        obss, actions, rewards, next_obss, dones = self.buffer.sample()
+        x = obss
+        y = rewards
+        for i in range(len(actions)):
+            if not dones[i]:
+                next_obs = torch.tensor(next_obss[i]).to(self.device).float()
+                y[i] = rewards[i] + self.get_epsilon()*torch.max(self.target_net(next_obs))
+        return torch.tensor(x).float().to(self.device), torch.tensor(y).float().reshape((-1,1)).to(self.device)
+    def save_model(self):
+        save_dir = os.path.join(os.path.dirname((os.path.abspath(__file__))), 'saves')
+        if not os.path.exists(save_dir):
+            os.mkdir(save_dir)
+        timestamp = time.time()
+        timestamp = time.strftime('%Y-%m-%d.%H:%M:%S', time.localtime(timestamp))
+        fname = self.model_name + '_' +self.env_name + '_' + timestamp + '.dat'
+        fname = os.path.join(save_dir,fname)
+        torch.save(self.q_net.state_dict(), fname)
+    def load_model(self, fname):
+        save_dir = os.path.join(os.path.dirname((os.path.abspath(__file__))), 'saves')
+        fname = os.path.join(save_dir, fname)
+        model = torch.load(fname)
+        self.q_net.load_state_dict(model)
 
 if __name__ == '__main__':
     env = gym.make('CartPole-v1')
     agent = Agent(env)
-    agent.train_with_iters(100000)
+    #agent.train_with_traje_reward(20)
+    #agent.save_model()
+    agent.load_model('dqn_CartPole-v1_2020-08-23.18:20:10.dat')
     agent.play()
