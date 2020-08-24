@@ -15,25 +15,33 @@ DEVICE = 'cpu'
 The input size of Q network is the size of observation, and the output size of Q network
 is the size of actor. So it is obs -> Q of action, but not (obs, action) -> Q.
 '''
+
+
 class Q_Network(nn.Module):
-    def __init__(self, obs_size, actor_size,hidden_size):
+    def __init__(self, obs_size, actor_size, hidden_size):
         super(Q_Network, self).__init__()
         self.layer1 = nn.Linear(obs_size, hidden_size)
         nn.init.xavier_normal_(self.layer1.weight, gain=1)
         self.layer2 = nn.Linear(hidden_size, actor_size)
         nn.init.xavier_normal_(self.layer2.weight, gain=1)
-    def forward(self,x):
+
+    def forward(self, x):
         x = F.relu(self.layer1(x))
         return self.layer2(x)
+
+
 '''
 Experience buffer
 '''
+
+
 class Buffer:
     def __init__(self, buffer_size, batch_size):
         self.buffer_size = buffer_size
         self.batch_size = batch_size
         self.reply_buffer = collections.deque(maxlen=self.buffer_size)
         self.buffer_len = 0
+
     def __len__(self):
         return len(self.reply_buffer)
 
@@ -45,8 +53,9 @@ class Buffer:
         assert self.buffer_len >= self.batch_size
         indexs = np.random.choice(self.buffer_len, self.batch_size, replace=False)
         obss, actions, rewards, next_obss, dones = zip(*[self.reply_buffer[i] for i in indexs])
-        return np.array(obss), np.array(actions), np.array(rewards, dtype=np.float32),\
-               np.array(next_obss), np.array(dones, dtype=np.uint8)
+        return np.array(obss, dtype=np.float32), np.array(actions), np.array(rewards, dtype=np.float32), \
+               np.array(next_obss, dtype=np.float32), np.array(dones, dtype=np.uint8)
+
 
 class Agent:
     def __init__(self,
@@ -88,7 +97,7 @@ class Agent:
         self.total_trajectory = 0
         self.total_step = 0
         self.this_trajectory_reward = 0
-        self.recent_trajectory_rewards = collections.deque(maxlen = 10)
+        self.recent_trajectory_rewards = collections.deque(maxlen=30)
         self.now_obs = None
         self.reset()
 
@@ -114,8 +123,6 @@ class Agent:
         self.total_step += 1
         if render:
             self.env.render()
-        if done and self.mode == 'train':
-            self.reset()
         return obs, reward, done, _
 
     def set_mode(self, mode):
@@ -132,7 +139,7 @@ class Agent:
 
     def get_epsilon(self):
         if self.anneal_explore:
-            return self.max_epsilon - self.t * 0.00001 if self.t < 25000 else 0.05
+            return self.max_epsilon - self.total_step * 0.00001 if self.total_step < 25000 else 0.05
         else:
             return self.max_epsilon
 
@@ -168,23 +175,24 @@ class Agent:
             if self.total_step % self.synchronize == 0:
                 self.synchronize_net()
             if len(self.recent_trajectory_rewards) > 0:
-                if sum(self.recent_trajectory_rewards)/len(self.recent_trajectory_rewards) > target_reward:
+                if sum(self.recent_trajectory_rewards) / len(self.recent_trajectory_rewards) > target_reward:
+                    self.save_model()
                     break
+
     def train_step(self):
-        action = self.select_action(self.now_obs) #select action and step in env
+        action = self.select_action(self.now_obs)  # select action and step in env
         obs, reward, done, _ = self.step(action)
         if done:
-            if self.total_trajectory%10 == 0:
+            if self.total_trajectory % 10 == 0:
                 print("Finish {} trajectories, get {} rewards this one.".format(self.total_trajectory,
-                                                                                self.this_trajectory_reward ))
+                                                                                self.this_trajectory_reward))
             self.recent_trajectory_rewards.append(self.this_trajectory_reward)
             self.writer.add_scalar('average reward',
                                    sum(self.recent_trajectory_rewards) / len(self.recent_trajectory_rewards),
                                    global_step=self.total_trajectory)
-        if self.buffer.buffer_len > self.batch_size: #train
-            x, y = self.get_batch_data()
-            prediction = self.q_net(x)
-            loss = self.loss_function(y, prediction)
+            self.reset()
+        if self.buffer.buffer_len > self.batch_size:  # train
+            loss = self.get_batch_loss()
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
@@ -200,7 +208,7 @@ class Agent:
             action = self.best_action(self.now_obs)
             self.step(action, render=True)
 
-    def get_batch_data(self):
+    def get_batch_loss(self):
         obss, actions, rewards, next_obss, dones = self.buffer.sample()
         obss = torch.tensor(obss).to(self.device)
         actions = torch.tensor(actions).to(self.device)
@@ -208,14 +216,16 @@ class Agent:
         next_obss = torch.tensor(next_obss).to(self.device)
         dones = torch.ByteTensor(dones).to(self.device)
 
-        x = obss
-        y = self.q_net(x)
-        #print(y[0])
-        for i in range(len(actions)):
-            if not dones[i]:
-                y[i][actions[i]] = rewards[i] + self.gamma * torch.max(self.target_net(next_obss[i]))
-        #print(y[0])
-        return x, y
+        now_obs_action_values = self.q_net(obss).gather(dim=1, index=actions.unsqueeze(-1)).squeeze(-1)
+        next_obs_values = self.target_net(next_obss).max(1)[0]
+        next_obs_values[dones] = 0.0
+        next_obs_values = next_obs_values.detach()
+
+        expected_obs_action_values = rewards + self.gamma * next_obs_values
+        return nn.MSELoss()(now_obs_action_values, expected_obs_action_values)
+
+
+
 
     def save_model(self):
         save_dir = os.path.join(os.path.dirname((os.path.abspath(__file__))), 'saves')
@@ -223,8 +233,8 @@ class Agent:
             os.mkdir(save_dir)
         timestamp = time.time()
         timestamp = time.strftime('%Y-%m-%d-%H-%M-%S', time.localtime(timestamp))
-        fname = self.model_name + '_' +self.env_name + '_' + timestamp + '.dat'
-        fname = os.path.join(save_dir,fname)
+        fname = self.model_name + '_' + self.env_name + '_' + timestamp + '.dat'
+        fname = os.path.join(save_dir, fname)
         torch.save(self.q_net.state_dict(), fname)
 
     def load_model(self, fname):
@@ -233,10 +243,9 @@ class Agent:
         model = torch.load(fname)
         self.q_net.load_state_dict(model)
 
+
 if __name__ == '__main__':
     env = gym.make('CartPole-v1')
     agent = Agent(env)
-    agent.train_with_traje_reward(150)
-    agent.save_model()
-    #agent.load_model('dqn_CartPole-v1_2020-08-23-21-37-04.dat')
+    agent.train_with_traje_reward(195)
     agent.play()
