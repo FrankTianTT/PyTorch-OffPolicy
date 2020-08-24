@@ -9,7 +9,7 @@ import numpy as np
 import collections
 from tensorboardX import SummaryWriter
 
-DEVICE = 'cpu'
+DEVICE = 'cuda'
 
 '''
 The input size of Q network is the size of observation, and the output size of Q network
@@ -54,13 +54,12 @@ class Buffer:
         indexs = np.random.choice(self.buffer_len, self.batch_size, replace=False)
         obss, actions, rewards, next_obss, dones = zip(*[self.reply_buffer[i] for i in indexs])
         return np.array(obss, dtype=np.float32), np.array(actions), np.array(rewards, dtype=np.float32), \
-               np.array(next_obss, dtype=np.float32), np.array(dones, dtype=np.uint8)
+               np.array(next_obss, dtype=np.float32), np.array(dones, dtype=np.bool)
 
 
-class Agent:
+class DQN_Agent:
     def __init__(self,
                  env,
-                 model_name='dqn',
                  env_name='CartPole-v1',
                  mode='train',
                  hidden_size=64,
@@ -72,9 +71,23 @@ class Agent:
                  learning_rate=0.001,
                  device=DEVICE,
                  synchronize=200):
+        """
+        :param env:
+        :param model_name:
+        :param env_name:
+        :param mode:
+        :param hidden_size:
+        :param buffer_size:
+        :param batch_size:
+        :param gamma:
+        :param max_epsilon:
+        :param anneal_explore:
+        :param learning_rate:
+        :param device:
+        :param synchronize:
+        """
         assert isinstance(env.action_space, gym.spaces.Discrete)
         self.env = env
-        self.model_name = model_name
         self.env_name = env_name
         self.mode = mode
         self.hidden_size = hidden_size
@@ -87,6 +100,7 @@ class Agent:
         self.device = torch.device(device)
         self.synchronize = synchronize
 
+        self.model_name = 'DQN'
         self.buffer = Buffer(self.buffer_size, self.batch_size)
 
         self.obs_size = env.observation_space.shape[0]
@@ -211,10 +225,10 @@ class Agent:
     def get_batch_loss(self):
         obss, actions, rewards, next_obss, dones = self.buffer.sample()
         obss = torch.tensor(obss).to(self.device)
-        actions = torch.tensor(actions).to(self.device)
+        actions = torch.tensor(actions).long().to(self.device)
         rewards = torch.tensor(rewards).to(self.device)
         next_obss = torch.tensor(next_obss).to(self.device)
-        dones = torch.ByteTensor(dones).to(self.device)
+        dones = torch.tensor(dones).to(self.device)
 
         now_obs_action_values = self.q_net(obss).gather(dim=1, index=actions.unsqueeze(-1)).squeeze(-1)
         next_obs_values = self.target_net(next_obss).max(1)[0]
@@ -246,6 +260,6 @@ class Agent:
 
 if __name__ == '__main__':
     env = gym.make('CartPole-v1')
-    agent = Agent(env)
-    agent.train_with_traje_reward(195)
+    agent = DQN_Agent(env)
+    agent.train_with_traje_reward(450)
     agent.play()
