@@ -15,7 +15,7 @@ agent = Agent(env,
                  anneal_explore=True,
                  learning_rate=0.001,
                  device=DEVICE,
-                 synchronize=50)
+                 synchronize=200)
 
 agent.train_with_traje_reward(150)
 agent.save_model()

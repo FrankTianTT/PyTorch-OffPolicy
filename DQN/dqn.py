@@ -25,7 +25,9 @@ class Q_Network(nn.Module):
     def forward(self,x):
         x = F.relu(self.layer1(x))
         return self.layer2(x)
-
+'''
+Experience buffer
+'''
 class Buffer:
     def __init__(self, buffer_size=1000, batch_size=256):
         self.buffer_size = buffer_size
@@ -50,15 +52,15 @@ class Agent:
                  model_name='dqn',
                  env_name='CartPole-v1',
                  mode='train',
-                 hidden_size=100,
-                 buffer_size=1000,
-                 batch_size=64,
+                 hidden_size=64,
+                 buffer_size=2096,
+                 batch_size=32,
                  gamma=0.9,
                  max_epsilon=0.3,
-                 anneal_explore=False,
+                 anneal_explore=True,
                  learning_rate=0.001,
                  device=DEVICE,
-                 synchronize=50):
+                 synchronize=200):
         assert isinstance(env.action_space, gym.spaces.Discrete)
         self.env = env
         self.model_name = model_name
@@ -84,10 +86,13 @@ class Agent:
         self.total_trajectory = 0
         self.total_step = 0
         self.this_trajectory_reward = 0
-        self.recent_trajectory_rewards = collections.deque(maxlen = 5)
+        self.recent_trajectory_rewards = collections.deque(maxlen = 10)
         self.action_sum = self.actor_size*[0]
         self.now_obs = None
         self.reset()
+
+        self.timer_1k_steps = 0
+        self.time = time.time()
 
         self.writer = SummaryWriter()
         print(self.q_net)
@@ -113,9 +118,17 @@ class Agent:
             if self.total_trajectory%10 == 0:
                 print("Finish {} trajectories, get {} rewards this one.".format(self.total_trajectory,
                                                                                 self.this_trajectory_reward ))
-            self.writer.add_scalar('trajectory reward', self.this_trajectory_reward, global_step=self.total_trajectory)
             self.recent_trajectory_rewards.append(self.this_trajectory_reward)
+            self.writer.add_scalar('average reward',
+                                   sum(self.recent_trajectory_rewards) / len(self.recent_trajectory_rewards),
+                                   global_step=self.total_trajectory)
             self.this_trajectory_reward = 0
+        if self.total_step % 1000:
+            take_time = time.time() - self.time
+            self.time = time.time()
+            self.writer.add_scalar('take_time of ' + str(self.device), take_time, global_step=self.total_trajectory)
+
+
         return obs, reward, done, _
 
     def set_mode(self, mode):
@@ -202,8 +215,7 @@ class Agent:
         return obs, reward, done, _
 
     def synchronize_net(self):
-        self.target_net.layer1.weight = self.q_net.layer1.weight
-        self.target_net.layer2.weight = self.q_net.layer2.weight
+        self.target_net.load_state_dict(self.q_net.state_dict())
 
     def play(self):
         self.set_mode('play')
@@ -214,13 +226,21 @@ class Agent:
 
     def get_batch_data(self):
         obss, actions, rewards, next_obss, dones = self.buffer.sample()
+        obss = torch.tensor(obss).to(self.device).float()
+        actions = torch.tensor(actions).to(self.device)
+        rewards = torch.tensor(rewards).to(self.device)
+        next_obss = torch.tensor(next_obss).to(self.device).float()
+        dones = torch.tensor(dones).to(self.device)
+
         x = obss
-        y = rewards
+        y = self.q_net(x)
+        #print(y[0])
         for i in range(len(actions)):
             if not dones[i]:
-                next_obs = torch.tensor(next_obss[i]).to(self.device).float()
-                y[i] = rewards[i] + self.gamma * torch.max(self.target_net(next_obs))
-        return torch.tensor(x).float().to(self.device), torch.tensor(y).float().reshape((-1,1)).to(self.device)
+                y[i][actions[i]] = rewards[i] + self.gamma * torch.max(self.target_net(next_obss[i]))
+        #print(y[0])
+        return x, y
+
     def save_model(self):
         save_dir = os.path.join(os.path.dirname((os.path.abspath(__file__))), 'saves')
         if not os.path.exists(save_dir):
