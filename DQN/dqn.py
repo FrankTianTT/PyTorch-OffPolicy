@@ -15,8 +15,6 @@ DEVICE = 'cuda'
 The input size of Q network is the size of observation, and the output size of Q network
 is the size of actor. So it is obs -> Q of action, but not (obs, action) -> Q.
 '''
-
-
 class Q_Network(nn.Module):
     def __init__(self, obs_size, actor_size, hidden_size):
         super(Q_Network, self).__init__()
@@ -60,6 +58,7 @@ class Buffer:
 class DQN_Agent:
     def __init__(self,
                  env,
+                 Net=Q_Network,
                  env_name='CartPole-v1',
                  mode='train',
                  hidden_size=64,
@@ -70,10 +69,11 @@ class DQN_Agent:
                  anneal_explore=True,
                  learning_rate=0.001,
                  device=DEVICE,
-                 synchronize=200):
+                 synchronize=200,
+                 model_name='DQN'):
         """
+
         :param env:
-        :param model_name:
         :param env_name:
         :param mode:
         :param hidden_size:
@@ -85,6 +85,7 @@ class DQN_Agent:
         :param learning_rate:
         :param device:
         :param synchronize:
+        :param model_name:
         """
         assert isinstance(env.action_space, gym.spaces.Discrete)
         self.env = env
@@ -99,14 +100,14 @@ class DQN_Agent:
         self.learning_rate = learning_rate
         self.device = torch.device(device)
         self.synchronize = synchronize
+        self.model_name = model_name
 
-        self.model_name = 'DQN'
         self.buffer = Buffer(self.buffer_size, self.batch_size)
 
         self.obs_size = env.observation_space.shape[0]
         self.actor_size = env.action_space.n
-        self.q_net = Q_Network(self.obs_size, self.actor_size, self.hidden_size).to(self.device)
-        self.target_net = Q_Network(self.obs_size, self.actor_size, self.hidden_size).to(self.device)
+        self.q_net = Net(self.obs_size, self.actor_size, self.hidden_size).to(self.device)
+        self.target_net = Net(self.obs_size, self.actor_size, self.hidden_size).to(self.device)
 
         self.total_trajectory = 0
         self.total_step = 0
@@ -118,7 +119,12 @@ class DQN_Agent:
         self.timer_1k_steps = 0
         self.time = time.time()
 
-        self.writer = SummaryWriter()
+        self.save_dir = os.path.join(os.path.dirname((os.path.abspath(__file__))), 'saves')
+        self.run_dir = os.path.join(os.path.dirname((os.path.abspath(__file__))), 'runs')
+        timestamp = time.time()
+        timestamp = time.strftime('%Y-%m-%d-%H-%M-%S', time.localtime(timestamp))
+        self.log_name = '{}_{}_{}.dat'.format(self.model_name, self.env_name, timestamp)
+        self.writer = SummaryWriter(log_dir=os.path.join(self.run_dir, self.log_name))
         print(self.q_net)
 
     def reset(self):
@@ -238,17 +244,14 @@ class DQN_Agent:
         expected_obs_action_values = rewards + self.gamma * next_obs_values
         return nn.MSELoss()(now_obs_action_values, expected_obs_action_values)
 
-
-
-
     def save_model(self):
-        save_dir = os.path.join(os.path.dirname((os.path.abspath(__file__))), 'saves')
-        if not os.path.exists(save_dir):
-            os.mkdir(save_dir)
+        if not os.path.exists(self.save_dir):
+            os.mkdir(self.save_dir)
         timestamp = time.time()
         timestamp = time.strftime('%Y-%m-%d-%H-%M-%S', time.localtime(timestamp))
-        fname = self.model_name + '_' + self.env_name + '_' + timestamp + '.dat'
-        fname = os.path.join(save_dir, fname)
+        aver_reward = sum(self.recent_trajectory_rewards) / len(self.recent_trajectory_rewards)
+        fname = '{}_{}_{:.2}_{}.dat'.format(self.model_name, self.env_name, aver_reward, timestamp)
+        fname = os.path.join(self.save_dir, fname)
         torch.save(self.q_net.state_dict(), fname)
 
     def load_model(self, fname):
@@ -257,9 +260,8 @@ class DQN_Agent:
         model = torch.load(fname)
         self.q_net.load_state_dict(model)
 
-
 if __name__ == '__main__':
     env = gym.make('CartPole-v1')
     agent = DQN_Agent(env)
-    agent.train_with_traje_reward(450)
+    agent.train_with_traje_reward(430)
     agent.play()

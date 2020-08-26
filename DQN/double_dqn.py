@@ -25,7 +25,8 @@ class Double_DQN_Agent(DQN_Agent):
                  anneal_explore=True,
                  learning_rate=0.001,
                  device=DEVICE,
-                 synchronize=200):
+                 synchronize=200,
+                 model_name='Double-DQN'):
         super(Double_DQN_Agent, self).__init__(env,
                                                env_name=env_name,
                                                mode=mode,
@@ -37,8 +38,8 @@ class Double_DQN_Agent(DQN_Agent):
                                                anneal_explore=anneal_explore,
                                                learning_rate=learning_rate,
                                                device=device,
-                                               synchronize=synchronize)
-        self.model_name = 'Double_DQN'
+                                               synchronize=synchronize,
+                                               model_name=model_name)
 
     def get_batch_loss(self):
         obss, actions, rewards, next_obss, dones = self.buffer.sample()
@@ -58,6 +59,6 @@ class Double_DQN_Agent(DQN_Agent):
         return nn.MSELoss()(now_obs_action_values, expected_obs_action_values)
 if __name__ == '__main__':
     env = gym.make('CartPole-v1')
-    agent = DQN_Agent(env)
-    agent.train_with_traje_reward(450)
+    agent = Double_DQN_Agent(env)
+    agent.train_with_traje_reward(430)
     agent.play()
