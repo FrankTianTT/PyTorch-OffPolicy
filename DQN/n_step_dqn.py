@@ -10,7 +10,7 @@ import numpy as np
 import collections
 from tensorboardX import SummaryWriter
 
-DEVICE = 'cpu'
+DEVICE = 'cuda'
 
 class N_Step_DQN_Agent(DQN_Agent):
     def __init__(self,

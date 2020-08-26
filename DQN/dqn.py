@@ -33,7 +33,7 @@ Experience buffer
 '''
 
 
-class Buffer:
+class Replay_Buffer:
     def __init__(self, buffer_size, batch_size):
         self.buffer_size = buffer_size
         self.batch_size = batch_size
@@ -59,6 +59,7 @@ class DQN_Agent:
     def __init__(self,
                  env,
                  Net=Q_Network,
+                 Buffer=Replay_Buffer,
                  env_name='CartPole-v1',
                  mode='train',
                  hidden_size=64,
@@ -121,11 +122,14 @@ class DQN_Agent:
 
         self.save_dir = os.path.join(os.path.dirname((os.path.abspath(__file__))), 'saves')
         self.run_dir = os.path.join(os.path.dirname((os.path.abspath(__file__))), 'runs')
+        self.writer = None
+        print(self.q_net)
+
+    def set_writer(self):
         timestamp = time.time()
         timestamp = time.strftime('%Y-%m-%d-%H-%M-%S', time.localtime(timestamp))
         self.log_name = '{}_{}_{}.dat'.format(self.model_name, self.env_name, timestamp)
         self.writer = SummaryWriter(log_dir=os.path.join(self.run_dir, self.log_name))
-        print(self.q_net)
 
     def reset(self):
         obs = self.env.reset()
@@ -172,6 +176,7 @@ class DQN_Agent:
 
     def train_with_iters(self, iters=10000):
         assert self.mode == 'train'
+        self.set_writer()
         self.optimizer = torch.optim.Adam(self.q_net.parameters(), lr=self.learning_rate)
         self.loss_function = torch.nn.MSELoss()
         self.total_step = 0
@@ -184,6 +189,7 @@ class DQN_Agent:
 
     def train_with_traje_reward(self, target_reward):
         assert self.mode == 'train'
+        self.set_writer()
         self.optimizer = torch.optim.Adam(self.q_net.parameters(), lr=self.learning_rate)
         self.loss_function = torch.nn.MSELoss()
         self.total_step = 0
@@ -221,12 +227,14 @@ class DQN_Agent:
     def synchronize_net(self):
         self.target_net.load_state_dict(self.q_net.state_dict())
 
-    def play(self):
+    def play(self, done=False):
         self.set_mode('play')
         self.reset()
-        for i in range(1000):
+        for i in range(5000):
             action = self.best_action(self.now_obs)
-            self.step(action, render=True)
+            obs, reward, done, _ = self.step(action, render=True)
+            if done:
+                self.reset()
 
     def get_batch_loss(self):
         obss, actions, rewards, next_obss, dones = self.buffer.sample()
