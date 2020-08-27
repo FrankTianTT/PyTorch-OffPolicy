@@ -3,6 +3,7 @@ import gym
 import random
 import os
 import time
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -12,21 +13,41 @@ from tensorboardX import SummaryWriter
 
 DEVICE = 'cuda'
 
+class Noisy_Linear(nn.Linear):
+    def __init__(self, in_features, out_features, sigma_init=0.017, bias=True):
+        super(Noisy_Linear, self).__init__(in_features, out_features, bias=bias)
+        self.sigma_weight = nn.Parameter(torch.full((out_features, in_features), sigma_init), requires_grad=True)
+        self.register_buffer("epsilon_weight", torch.zeros(out_features, in_features))
+        if bias:
+            self.sigma_bias = nn.Parameter(torch.full((out_features,), sigma_init), requires_grad=True)
+            self.register_buffer("epsilon_bias", torch.zeros(out_features))
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        std = math.sqrt(3 / self.in_features)
+        self.weight.data.uniform_(-std, std)
+        self.bias.data.uniform_(-std, std)
+
+    def forward(self, x):
+        self.epsilon_weight.normal_()
+        bias = self.bias
+        if bias is not None:
+            self.epsilon_bias.normal_()
+            bias = bias + self.sigma_bias * self.epsilon_bias.data
+        weight = self.weight + self.sigma_weight * self.epsilon_weight.data
+        return F.linear(x, weight, bias)
+
+
 class Noisy_Q_Network(nn.Module):
     def __init__(self, obs_size, actor_size, hidden_size):
         super(Noisy_Q_Network, self).__init__()
-        self.layer1 = nn.Linear(obs_size, hidden_size)
-        nn.init.xavier_normal_(self.layer1.weight, gain=1)
-        self.adv_flow = nn.Linear(hidden_size, actor_size)
-        nn.init.xavier_normal_(self.adv_flow.weight, gain=1)
-        self.v_flow = nn.Linear(hidden_size, 1)
-        nn.init.xavier_normal_(self.v_flow.weight, gain=1)
+        self.layer1 = Noisy_Linear(obs_size, hidden_size)
+        self.layer2 = Noisy_Linear(hidden_size, actor_size)
 
     def forward(self, x):
         x = F.relu(self.layer1(x))
-        adv = self.adv_flow(x)
-        v = self.v_flow(x)
-        return v + adv - adv.mean()
+        return self.layer2(x)
+
 
 class Noisy_DQN_Agent(DQN_Agent):
     def __init__(self,
