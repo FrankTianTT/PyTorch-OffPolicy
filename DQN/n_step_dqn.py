@@ -74,6 +74,5 @@ class N_Step_DQN_Agent(DQN_Agent):
 if __name__ == '__main__':
     env = gym.make('CartPole-v1')
     agent = N_Step_DQN_Agent(env)
-    #agent.train_with_traje_reward(430)
-    agent.load_model('N-Step-DQN_CartPole-v1_4.4e+02_2020-08-26-15-20-48.dat')
+    agent.train_with_traje_reward(450)
     agent.play()

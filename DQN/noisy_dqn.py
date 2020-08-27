@@ -41,12 +41,14 @@ class Noisy_Linear(nn.Linear):
 class Noisy_Q_Network(nn.Module):
     def __init__(self, obs_size, actor_size, hidden_size):
         super(Noisy_Q_Network, self).__init__()
-        self.layer1 = Noisy_Linear(obs_size, hidden_size)
-        self.layer2 = Noisy_Linear(hidden_size, actor_size)
+        self.layer = nn.Sequential(Noisy_Linear(obs_size, hidden_size),
+                                   nn.ReLU(),
+                                   Noisy_Linear(hidden_size, hidden_size),
+                                   nn.ReLU(),
+                                   Noisy_Linear(hidden_size, actor_size))
 
     def forward(self, x):
-        x = F.relu(self.layer1(x))
-        return self.layer2(x)
+        return self.layer(x)
 
 
 class Noisy_DQN_Agent(DQN_Agent):

@@ -15,15 +15,14 @@ DEVICE = 'cuda'
 class Dueling_Q_Network(nn.Module):
     def __init__(self, obs_size, actor_size, hidden_size):
         super(Dueling_Q_Network, self).__init__()
-        self.layer1 = nn.Linear(obs_size, hidden_size)
-        nn.init.xavier_normal_(self.layer1.weight, gain=1)
+        self.layer = nn.Sequential(nn.Linear(obs_size, hidden_size),
+                                   nn.ReLU(),
+                                   nn.Linear(hidden_size, hidden_size))
         self.adv_flow = nn.Linear(hidden_size, actor_size)
-        nn.init.xavier_normal_(self.adv_flow.weight, gain=1)
         self.v_flow = nn.Linear(hidden_size, 1)
-        nn.init.xavier_normal_(self.v_flow.weight, gain=1)
 
     def forward(self, x):
-        x = F.relu(self.layer1(x))
+        x = self.layer(x)
         adv = self.adv_flow(x)
         v = self.v_flow(x)
         return v + adv - adv.mean()

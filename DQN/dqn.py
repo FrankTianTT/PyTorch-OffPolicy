@@ -18,14 +18,14 @@ is the size of actor. So it is obs -> Q of action, but not (obs, action) -> Q.
 class Q_Network(nn.Module):
     def __init__(self, obs_size, actor_size, hidden_size):
         super(Q_Network, self).__init__()
-        self.layer1 = nn.Linear(obs_size, hidden_size)
-        nn.init.xavier_normal_(self.layer1.weight, gain=1)
-        self.layer2 = nn.Linear(hidden_size, actor_size)
-        nn.init.xavier_normal_(self.layer2.weight, gain=1)
+        self.layer = nn.Sequential(nn.Linear(obs_size, hidden_size),
+                                   nn.ReLU(),
+                                   nn.Linear(hidden_size, hidden_size),
+                                   nn.ReLU(),
+                                   nn.Linear(hidden_size, actor_size))
 
     def forward(self, x):
-        x = F.relu(self.layer1(x))
-        return self.layer2(x)
+        return self.layer(x)
 
 
 '''
