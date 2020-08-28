@@ -10,7 +10,7 @@ import numpy as np
 import collections
 from tensorboardX import SummaryWriter
 
-DEVICE = 'cuda'
+DEVICE = 'cpu'
 
 class Dueling_Q_Network(nn.Module):
     def __init__(self, obs_size, actor_size, hidden_size):
@@ -30,10 +30,9 @@ class Dueling_Q_Network(nn.Module):
 class Dueling_DQN_Agent(DQN_Agent):
     def __init__(self,
                  env,
-                 Net=Dueling_Q_Network,
+                 net,
                  env_name='CartPole-v1',
                  mode='train',
-                 hidden_size=64,
                  buffer_size=2096,
                  batch_size=32,
                  gamma=0.9,
@@ -44,10 +43,9 @@ class Dueling_DQN_Agent(DQN_Agent):
                  synchronize=200,
                  model_name='Dueling-DQN'):
         super(Dueling_DQN_Agent, self).__init__(env,
-                                                Net=Net,
+                                                net=net,
                                                 env_name=env_name,
                                                 mode=mode,
-                                                hidden_size=hidden_size,
                                                 buffer_size=buffer_size,
                                                 batch_size=batch_size,
                                                 gamma=gamma,
@@ -59,6 +57,7 @@ class Dueling_DQN_Agent(DQN_Agent):
                                                 model_name=model_name)
 if __name__ == '__main__':
     env = gym.make('CartPole-v1')
-    agent = Dueling_DQN_Agent(env)
+    net = Dueling_Q_Network(env.observation_space.shape[0], env.action_space.n, 100)
+    agent = Dueling_DQN_Agent(env, net)
     agent.train_with_traje_reward(430)
     agent.play()

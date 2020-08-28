@@ -4,12 +4,13 @@ import os
 import time
 import torch
 import torch.nn as nn
+import copy
 import torch.nn.functional as F
 import numpy as np
 import collections
 from tensorboardX import SummaryWriter
 
-DEVICE = 'cuda'
+DEVICE = 'cpu'
 
 '''
 The input size of Q network is the size of observation, and the output size of Q network
@@ -58,11 +59,10 @@ class Replay_Buffer:
 class DQN_Agent:
     def __init__(self,
                  env,
-                 Net=Q_Network,
+                 net,
                  Buffer=Replay_Buffer,
                  env_name='CartPole-v1',
                  mode='train',
-                 hidden_size=64,
                  buffer_size=2096,
                  batch_size=32,
                  gamma=0.9,
@@ -75,9 +75,10 @@ class DQN_Agent:
         """
 
         :param env:
+        :param Net:
+        :param Buffer:
         :param env_name:
         :param mode:
-        :param hidden_size:
         :param buffer_size:
         :param batch_size:
         :param gamma:
@@ -90,9 +91,10 @@ class DQN_Agent:
         """
         assert isinstance(env.action_space, gym.spaces.Discrete)
         self.env = env
+        self.q_net = net
+        self.target_net = copy.deepcopy(self.q_net)
         self.env_name = env_name
         self.mode = mode
-        self.hidden_size = hidden_size
         self.buffer_size = buffer_size
         self.batch_size = batch_size
         self.gamma = gamma
@@ -103,12 +105,8 @@ class DQN_Agent:
         self.synchronize = synchronize
         self.model_name = model_name
 
-        self.buffer = Buffer(self.buffer_size, self.batch_size)
 
-        self.obs_size = env.observation_space.shape[0]
-        self.actor_size = env.action_space.n
-        self.q_net = Net(self.obs_size, self.actor_size, self.hidden_size).to(self.device)
-        self.target_net = Net(self.obs_size, self.actor_size, self.hidden_size).to(self.device)
+        self.buffer = Buffer(self.buffer_size, self.batch_size)
 
         self.total_trajectory = 0
         self.total_step = 0
@@ -249,8 +247,11 @@ class DQN_Agent:
         next_obs_values[dones] = 0.0
         next_obs_values = next_obs_values.detach()
 
-        expected_obs_action_values = rewards + self.gamma * next_obs_values
+        expected_obs_action_values = rewards + self.get_gamma() * next_obs_values
         return nn.MSELoss()(now_obs_action_values, expected_obs_action_values)
+
+    def get_gamma(self):
+        return self.gamma
 
     def save_model(self):
         if not os.path.exists(self.save_dir):
@@ -270,6 +271,7 @@ class DQN_Agent:
 
 if __name__ == '__main__':
     env = gym.make('CartPole-v1')
-    agent = DQN_Agent(env)
+    net = Q_Network(env.observation_space.shape[0], env.action_space.n, 100)
+    agent = DQN_Agent(env, net)
     agent.train_with_traje_reward(430)
     agent.play()
